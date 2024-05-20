@@ -2,7 +2,7 @@ use anyhow::Result;
 use reqwest::Url;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use tokio::io::AsyncReadExt;
+use tokio::io::AsyncBufReadExt;
 use tokio::net::{TcpListener, TcpStream};
 
 async fn play_wav(audio_wav: bytes::Bytes) -> Result<()> {
@@ -47,32 +47,35 @@ struct Message {
     pub audio_wav: bytes::Bytes
 }
 
-async fn tcp_handler(mut socket: TcpStream, msg_queue: Arc<Mutex<VecDeque<Message>>>) {
-    let mut buffer = vec![0; 32768];
+async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -> Vec<u8> {
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut bytes_read;
 
-    // In a loop, read data from the socket and write the data back.
     loop {
-        let n = socket
-            .read(&mut buffer)
-            .await
-            .expect("failed to read data from socket");
+        let read_until = reader.read_until(b'\n', &mut buffer);
+        bytes_read = read_until.await.unwrap();
+        if bytes_read == 0 {
+            break;
+        }
 
-        // Add valid messages to the queue for processing
-        if n > 0 {
-            let needle: Vec<u8> = vec![b'\r', b'\n', b'\r', b'\n'];
+        if buffer.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
 
-            let Some(end_pos) = buffer.windows(needle.len()).position(|window| window == needle.as_slice()) else {
-                eprintln!("Oversized request or missing \\r\\n\\r\\n");
-                continue;
-            };
+    buffer
+}
 
-            let buf = &buffer[0..end_pos];
-            let audio_wav = query_voicevox(buf).await.unwrap();
+async fn tcp_handler(socket: TcpStream, msg_queue: Arc<Mutex<VecDeque<Message>>>) {
+    let mut reader = tokio::io::BufReader::new(socket);
 
-            let mut _translation = buffer.clone();
-            _translation.resize(end_pos, 0);
+    loop {
+        let buffer = read_until_end_sequence(&mut reader).await;
 
-            msg_queue.lock().unwrap().push_back(Message {_translation, audio_wav } );
+        if !buffer.is_empty() {
+            let audio_wav = query_voicevox(&buffer).await.unwrap();
+
+            msg_queue.lock().unwrap().push_back(Message {_translation: buffer, audio_wav } );
         }
     }
 }
