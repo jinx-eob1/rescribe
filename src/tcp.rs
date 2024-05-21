@@ -3,7 +3,6 @@ use tokio::net::TcpStream;
 
 use crate::tts;
 use crate::Message;
-use crate::Queue;
 
 async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -> Vec<u8> {
     let mut buffer: Vec<u8> = Vec::new();
@@ -24,19 +23,19 @@ async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -
     buffer
 }
 
-pub async fn handler(socket: TcpStream, ws_queue: Queue<Message>, audio_queue: Queue<Message>) {
+pub async fn handler(socket: TcpStream, tx: tokio::sync::broadcast::Sender<Message>) {
     let mut reader = tokio::io::BufReader::new(socket);
 
     loop {
         let buffer = read_until_end_sequence(&mut reader).await;
 
         if buffer.is_empty() {
-            break;;
+            break;
         }
 
         let audio_wav = tts::voicevox(&buffer).await.unwrap();
+        let msg = Message{ _translation: buffer, audio_wav };
 
-        ws_queue.lock().unwrap().push_back(Message {_translation: buffer.clone(), audio_wav: audio_wav.clone() } );
-        audio_queue.lock().unwrap().push_back(Message {_translation: buffer, audio_wav } );
+        tx.send(msg).unwrap();
     }
 }
