@@ -2,6 +2,8 @@ use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
+use std::sync::Arc;
+use std::sync::atomic;
 
 mod audio;
 mod tcp;
@@ -46,12 +48,24 @@ async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Resul
             .accept(socket)
             .await.unwrap();
 
-        let (mut writer, _reader) = ws_stream.split();
+        let (mut writer, mut reader) = ws_stream.split();
+        let alive_reader = Arc::new(atomic::AtomicBool::new(true));
+        let alive_write = Arc::clone(&alive_reader);
+
+        tokio::spawn(async move {
+            while let Some(Ok(_)) = reader.next().await { }
+            alive_reader.store(false, atomic::Ordering::Relaxed);
+        });
 
         let mut rx = rx.resubscribe();
         tokio::spawn(async move {
             loop {
                 let msg = rx.recv().await;
+
+                let alive = alive_write.load(atomic::Ordering::Relaxed);
+                if !alive {
+                    break;
+                }
         
                 if let Ok(msg) = msg {
                     let translated_text = String::from_utf8(msg._translation).unwrap();
@@ -59,10 +73,6 @@ async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Resul
                     if let Err(_err) = writer.send(tokio_msg).await {
                         break;
                     }
-                }
-                else {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-                    continue;
                 }
             }
         });
