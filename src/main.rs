@@ -1,8 +1,10 @@
 use anyhow::Result;
+use futures_util::{SinkExt, StreamExt};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use tokio::net::TcpListener;
-use futures_util::SinkExt;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_websockets::WebSocketStream;
+use tokio::signal::unix::{signal, SignalKind};
 
 mod audio;
 mod tcp;
@@ -17,12 +19,14 @@ struct Message {
 
 async fn play_audio_queue(msg_queue: Queue<Message>) {
     loop {
-        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         let msg = msg_queue.lock().unwrap().pop_front();
 
         if let Some(msg) = msg {
             // TODO: err log rather than unwrap
             audio::play_wav(msg.audio_wav).await.unwrap();
+        }
+        else {
+            tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
         }
     }
 }
@@ -41,35 +45,59 @@ async fn serve_tcp(ws_queue: Queue<Message>, audio_queue: Queue<Message>) -> Res
     }
 }
 
-async fn serve_websocket(ws_queue: Queue<Message>) -> Result<()> {
+async fn serve_websocket(msg_queue: Queue<Message>) -> Result<()> {
+    type SocketVec = Arc<tokio::sync::Mutex<Vec<WebSocketStream<TcpStream>>>>;
     let listener = TcpListener::bind("127.0.0.1:9090").await?;
+    let ws_streams: SocketVec = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+    let ws_streams_accept = Arc::clone(&ws_streams);
+    let _conn_accepter = tokio::spawn(async move {
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let ws_stream = tokio_websockets::ServerBuilder::new()
+                .accept(socket)
+                .await.unwrap();
+
+            ws_streams_accept.lock().await.push(ws_stream);
+        }
+    });
 
     loop {
-        let (socket, _) = listener.accept().await?;
-        let ws_q = Arc::clone(&ws_queue);
 
-        let mut ws_stream = tokio_websockets::ServerBuilder::new()
-            .accept(socket)
-            .await?;
+        if ws_streams.lock().await.is_empty() || msg_queue.lock().unwrap().is_empty() {
+            tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
+            continue;
+        }
 
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-                let msg = ws_q.lock().unwrap().pop_front();
+        let msg = msg_queue.lock().unwrap().pop_front();
 
-                if let Some(msg) = msg {
-                    // TODO: err log rather than unwrap
-                    let translated_text = String::from_utf8(msg._translation).unwrap();
-                    let tokio_msg = tokio_websockets::Message::text(translated_text);
-                    ws_stream.send(tokio_msg).await.unwrap();
+        if let Some(msg) = msg {
+            let translated_text = String::from_utf8(msg._translation).unwrap();
+            let tokio_msg = tokio_websockets::Message::text(translated_text);
+
+            let mut ws_stream_locked = ws_streams.lock().await;
+
+            let mut i = 0;
+
+            while i < ws_stream_locked.len() {
+                let stream = ws_stream_locked.get_mut(i).unwrap();
+
+                if let Err(_err) = stream.send(tokio_msg.clone()).await {
+                    ws_stream_locked.swap_remove(i);
+                }
+                else {
+                    i += 1;
                 }
             }
-        });
+        }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Ignore sigpipe
+    let mut _sigpipe = signal(SignalKind::pipe()).unwrap();
+
     let ws_queue: Queue<Message> = Arc::new(Mutex::new(VecDeque::new()));
     let audio_queue: Queue<Message> = Arc::new(Mutex::new(VecDeque::new()));
 
