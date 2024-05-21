@@ -30,11 +30,13 @@ pub async fn handler(socket: TcpStream, ws_queue: Queue<Message>, audio_queue: Q
     loop {
         let buffer = read_until_end_sequence(&mut reader).await;
 
-        if !buffer.is_empty() {
-            let audio_wav = tts::voicevox(&buffer).await.unwrap();
-
-            ws_queue.lock().unwrap().push_back(Message {_translation: buffer.clone(), audio_wav: audio_wav.clone() } );
-            audio_queue.lock().unwrap().push_back(Message {_translation: buffer, audio_wav } );
+        if buffer.is_empty() {
+            break;;
         }
+
+        let audio_wav = tts::voicevox(&buffer).await.unwrap();
+
+        ws_queue.lock().unwrap().push_back(Message {_translation: buffer.clone(), audio_wav: audio_wav.clone() } );
+        audio_queue.lock().unwrap().push_back(Message {_translation: buffer, audio_wav } );
     }
 }

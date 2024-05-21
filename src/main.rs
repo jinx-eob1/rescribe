@@ -26,7 +26,7 @@ async fn play_audio_queue(msg_queue: Queue<Message>) {
             audio::play_wav(msg.audio_wav).await.unwrap();
         }
         else {
-            tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         }
     }
 }
@@ -65,7 +65,7 @@ async fn serve_websocket(msg_queue: Queue<Message>) -> Result<()> {
     loop {
 
         if ws_streams.lock().await.is_empty() || msg_queue.lock().unwrap().is_empty() {
-            tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
             continue;
         }
 
