@@ -23,6 +23,7 @@ async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -
         }
 
         if buffer.ends_with(b"\r\n\r\n") {
+            buffer.truncate(buffer.len()-4);
             break;
         }
     }
