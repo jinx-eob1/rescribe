@@ -14,9 +14,7 @@ pub async fn voicevox(input_data: &[u8]) -> Result<bytes::Bytes> {
         .send()
         .await?;
 
-    println!("Response status: {}", res.status());
     let json_voice_data = res.text().await?;
-    //println!("Response body: {}", json_voice_data);
 
     let res = client
         .post("http://127.0.0.1:50021/synthesis?speaker=1")
@@ -24,7 +22,6 @@ pub async fn voicevox(input_data: &[u8]) -> Result<bytes::Bytes> {
         .send()
         .await?;
 
-    println!("Response status: {}", res.status());
     Ok(res.bytes().await?)
 }
 

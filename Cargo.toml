@@ -13,3 +13,5 @@ reqwest = "0.12.4"
 rodio = "0.18.0"
 tokio = { version = "1.37.0", features = ["full"] }
 tokio-websockets = { version = "0.8.2", features = ["server", "native-tls", "openssl"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"

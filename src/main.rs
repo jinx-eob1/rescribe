@@ -1,9 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, Context};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use std::sync::Arc;
 use std::sync::atomic;
+use tracing::error;
 
 mod audio;
 mod tcp;
@@ -15,14 +16,10 @@ struct Message {
     pub audio_wav: bytes::Bytes
 }
 
-async fn play_audio_queue(mut rx: tokio::sync::broadcast::Receiver<Message>) {
+async fn play_audio_queue(mut rx: tokio::sync::broadcast::Receiver<Message>) -> Result<()> {
     loop {
-        let msg = rx.recv().await;
-
-        // TODO: err log rather than unwrap
-        if let Ok(msg) = msg {
-            audio::play_wav(msg.audio_wav).await.unwrap();
-        }
+        let msg = rx.recv().await?;
+        audio::play_wav(msg.audio_wav).await?;
     }
 }
 
@@ -34,7 +31,7 @@ async fn serve_tcp(tx: tokio::sync::broadcast::Sender<Message>) -> Result<()> {
         let tx = tx.clone();
 
         tokio::spawn(async move {
-            tcp::handler(socket, tx).await;
+            return tcp::handler(socket, tx).await;
         });
     }
 }
@@ -43,10 +40,10 @@ async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Resul
     let listener = TcpListener::bind("127.0.0.1:9090").await?;
 
     loop {
-        let (socket, _) = listener.accept().await.unwrap();
+        let (socket, _) = listener.accept().await?;
         let ws_stream = tokio_websockets::ServerBuilder::new()
             .accept(socket)
-            .await.unwrap();
+            .await?;
 
         let (mut writer, mut reader) = ws_stream.split();
         let alive_reader = Arc::new(atomic::AtomicBool::new(true));
@@ -70,6 +67,8 @@ async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Resul
                 if let Ok(msg) = msg {
                     let translated_text = String::from_utf8(msg._translation).unwrap();
                     let tokio_msg = tokio_websockets::Message::text(translated_text);
+
+                    // Assume socket is closed
                     if let Err(_err) = writer.send(tokio_msg).await {
                         break;
                     }
@@ -80,27 +79,43 @@ async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Resul
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() ->  Result<()> {
     // Ignore sigpipe
-    let mut _sigpipe = signal(SignalKind::pipe()).unwrap();
+    let mut _sigpipe = signal(SignalKind::pipe())?;
 
-    let (msg_tx, mut msg_rx) = tokio::sync::broadcast::channel::<Message>(64);
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG).finish();
+
+    tracing::subscriber::set_global_default(subscriber).context("setting tracing default failed")?;
+
+    let span = tracing::trace_span!("rsll");
+    let _guard = span.enter();
+
+    let (msg_tx, msg_rx) = tokio::sync::broadcast::channel::<Message>(64);
     let msg_rx_ws = msg_rx.resubscribe();
     let msg_rx_audio = msg_rx;
 
-    let tcp_server = tokio::spawn(async move {
-        serve_tcp(msg_tx).await;
+    let tcp_server: tokio::task::JoinHandle<Result<(), anyhow::Error>> = tokio::spawn(async move {
+        return serve_tcp(msg_tx).await;
     });
 
     let ws_server = tokio::spawn(async move {
-        serve_websocket(msg_rx_ws).await;
+        return serve_websocket(msg_rx_ws).await;
     });
 
     let audio_reader = tokio::spawn(async move {
-        play_audio_queue(msg_rx_audio).await;
+        return play_audio_queue(msg_rx_audio).await;
     });
 
-    tokio::try_join!(tcp_server, ws_server, audio_reader)?;
+    let res = tokio::select! {
+        res = tcp_server   => res.unwrap(),
+        res = ws_server    => res.unwrap(),
+        res = audio_reader => res.unwrap()
+    };
+
+    if let Err(err) = res {
+        error!("Error: {}", err);
+    }
 
     Ok(())
 }

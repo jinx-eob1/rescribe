@@ -1,18 +1,25 @@
+use anyhow::Result;
 use tokio::io::AsyncBufReadExt;
 use tokio::net::TcpStream;
 
 use crate::tts;
 use crate::Message;
+use tracing::warn;
 
 async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -> Vec<u8> {
     let mut buffer: Vec<u8> = Vec::new();
-    let mut bytes_read;
 
     loop {
         let read_until = reader.read_until(b'\n', &mut buffer);
-        bytes_read = read_until.await.unwrap();
-        if bytes_read == 0 {
-            break;
+
+        match read_until.await {
+            Ok(bytes_read) => {
+                if bytes_read == 0 { break; }
+            },
+            Err(err) => {
+                warn!("voicevox tts error: {}", err);
+                break;
+            }
         }
 
         if buffer.ends_with(b"\r\n\r\n") {
@@ -23,19 +30,29 @@ async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -
     buffer
 }
 
-pub async fn handler(socket: TcpStream, tx: tokio::sync::broadcast::Sender<Message>) {
+pub async fn handler(socket: TcpStream, tx: tokio::sync::broadcast::Sender<Message>) -> Result<()> {
     let mut reader = tokio::io::BufReader::new(socket);
 
     loop {
         let buffer = read_until_end_sequence(&mut reader).await;
 
+        // Socket closed
         if buffer.is_empty() {
             break;
         }
 
-        let audio_wav = tts::voicevox(&buffer).await.unwrap();
+        let audio_wav = match tts::voicevox(&buffer).await {
+            Ok(wav) => wav,
+            Err(err) => {
+                warn!("Error with voicevox tts {}", err);
+                continue;
+            }
+        };
+
         let msg = Message{ _translation: buffer, audio_wav };
 
-        tx.send(msg).unwrap();
+        tx.send(msg)?;
     }
+
+    Ok(())
 }
