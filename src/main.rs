@@ -1,14 +1,36 @@
 use anyhow::{Result, Context};
+use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
-use tokio::net::TcpListener;
-use tokio::signal::unix::{signal, SignalKind};
 use std::sync::Arc;
 use std::sync::atomic;
+use tokio::net::TcpListener;
+use tokio::signal::unix::{signal, SignalKind};
 use tracing::error;
 
 mod audio;
 mod tcp;
 mod tts;
+
+#[derive(Copy, Clone, clap::ValueEnum)]
+enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error
+}
+
+impl LogLevel {
+    pub fn to_trace(&self) -> tracing::Level {
+        match self {
+            LogLevel::Trace => tracing::Level::TRACE,
+            LogLevel::Debug => tracing::Level::DEBUG,
+            LogLevel::Info  => tracing::Level::INFO,
+            LogLevel::Warn  => tracing::Level::WARN,
+            LogLevel::Error => tracing::Level::ERROR,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 struct Message {
@@ -78,13 +100,23 @@ async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Resul
     }
 }
 
+#[derive(clap::Parser)]
+pub struct Args {
+    #[arg(short='l', long="log-level", help = "Tracing log level")]
+    log_level: Option<LogLevel>,
+}
+
 #[tokio::main]
 async fn main() ->  Result<()> {
     // Ignore sigpipe
     let mut _sigpipe = signal(SignalKind::pipe())?;
 
+    let args = Args::parse();
+
+    let log_level = args.log_level.unwrap_or(LogLevel::Info).to_trace();
+
     let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG).finish();
+        .with_max_level(log_level).finish();
 
     tracing::subscriber::set_global_default(subscriber).context("setting tracing default failed")?;
 

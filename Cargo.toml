@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 bytes = "1.6.0"
+clap = { version = "4.2.5", features = ["derive"] }
 futures-util = { version = "0.3.30", features = ["sink"] }
 reqwest = "0.12.4"
 rodio = "0.18.0"
