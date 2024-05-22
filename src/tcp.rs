@@ -1,10 +1,10 @@
 use anyhow::Result;
 use tokio::io::AsyncBufReadExt;
 use tokio::net::TcpStream;
+use tracing::{info, warn};
 
 use crate::tts;
 use crate::Message;
-use tracing::warn;
 
 async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -> Vec<u8> {
     let mut buffer: Vec<u8> = Vec::new();
@@ -49,6 +49,8 @@ pub async fn handler(socket: TcpStream, tx: tokio::sync::broadcast::Sender<Messa
             }
         };
 
+        let translated_text = String::from_utf8(buffer.clone()).unwrap();
+        info!("Received: {}", translated_text);
         let msg = Message{ _translation: buffer, audio_wav };
 
         tx.send(msg)?;
