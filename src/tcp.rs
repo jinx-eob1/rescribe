@@ -1,10 +1,18 @@
 use anyhow::Result;
+use serde::Deserialize;
 use tokio::io::AsyncBufReadExt;
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 
 use crate::tts;
 use crate::Message;
+
+#[derive(Deserialize, Debug)]
+struct Packet {
+    language: String,
+    original_text: Option<String>,
+    translated_text: String
+}
 
 async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -> Vec<u8> {
     let mut buffer: Vec<u8> = Vec::new();
@@ -21,6 +29,8 @@ async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -
             }
         }
 
+        // Found the end terminator, remove it and return
+        // We *should* be returning clean json text from here
         if buffer.ends_with(b"\r\n\r\n") {
             buffer.truncate(buffer.len()-4);
             break;
@@ -41,7 +51,15 @@ pub async fn handler(socket: TcpStream, tx: tokio::sync::broadcast::Sender<Messa
             break;
         }
 
-        let audio_wav = match tts::voicevox(&buffer).await {
+        let packet: Packet = match serde_json::from_slice(&buffer) {
+            Ok(v) => v,
+            Err(err) => {
+                warn!("Malformed TCP packet received: {}", err);
+                continue;
+            }
+        };
+
+        let audio_wav = match tts::voicevox(&packet.translated_text).await {
             Ok(wav) => wav,
             Err(err) => {
                 warn!("Error with voicevox tts {}", err);
@@ -49,9 +67,8 @@ pub async fn handler(socket: TcpStream, tx: tokio::sync::broadcast::Sender<Messa
             }
         };
 
-        let translated_text = String::from_utf8(buffer.clone()).unwrap();
-        info!("Received: {}", translated_text);
-        let msg = Message{ _translation: buffer, audio_wav };
+        info!("Received translation: {}", packet.translated_text);
+        let msg = Message{ translated_text: packet.translated_text, audio_wav };
 
         tx.send(msg)?;
     }

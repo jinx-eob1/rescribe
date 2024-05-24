@@ -1232,6 +1232,8 @@ dependencies = [
  "futures-util",
  "reqwest",
  "rodio",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-websockets",
  "tracing",

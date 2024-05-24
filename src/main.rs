@@ -34,7 +34,7 @@ impl LogLevel {
 
 #[derive(Clone, Debug)]
 struct Message {
-    pub _translation: Vec<u8>,
+    pub translated_text: String,
     pub audio_wav: bytes::Bytes
 }
 
@@ -87,8 +87,7 @@ async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Resul
                 }
         
                 if let Ok(msg) = msg {
-                    let translated_text = String::from_utf8(msg._translation).unwrap();
-                    let tokio_msg = tokio_websockets::Message::text(translated_text);
+                    let tokio_msg = tokio_websockets::Message::text(msg.translated_text);
 
                     // Assume socket is closed
                     if let Err(_err) = writer.send(tokio_msg).await {

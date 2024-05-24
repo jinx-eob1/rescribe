@@ -1,9 +1,7 @@
 use anyhow::Result;
 use reqwest::Url;
 
-pub async fn voicevox(input_data: &[u8]) -> Result<bytes::Bytes> {
-    let text = std::str::from_utf8(input_data).unwrap().to_string();
-
+pub async fn voicevox(text: &str) -> Result<bytes::Bytes> {
     // Url encode
     let url = Url::parse(&std::format!("http://127.0.0.1:50021/audio_query?speaker=1&text={}", text))?.to_string();
 
