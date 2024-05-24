@@ -1223,21 +1223,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rodio"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16e3ea3fb0b6a1837445e29e36971b101c154920791113ff860768a68a0b1cad"
-dependencies = [
- "claxon",
- "cpal",
- "hound",
- "lewton",
- "symphonia",
- "thiserror",
-]
-
-[[package]]
-name = "rsll"
+name = "rescribe"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1250,6 +1236,20 @@ dependencies = [
  "tokio-websockets",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "rodio"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16e3ea3fb0b6a1837445e29e36971b101c154920791113ff860768a68a0b1cad"
+dependencies = [
+ "claxon",
+ "cpal",
+ "hound",
+ "lewton",
+ "symphonia",
+ "thiserror",
 ]
 
 [[package]]

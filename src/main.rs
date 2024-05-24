@@ -120,7 +120,7 @@ async fn main() ->  Result<()> {
 
     tracing::subscriber::set_global_default(subscriber).context("setting tracing default failed")?;
 
-    let span = tracing::trace_span!("rsll");
+    let span = tracing::trace_span!("rescribe");
     let _guard = span.enter();
 
     let (msg_tx, msg_rx) = tokio::sync::broadcast::channel::<Message>(64);
