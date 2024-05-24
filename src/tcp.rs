@@ -16,8 +16,7 @@ async fn read_until_end_sequence(reader: &mut tokio::io::BufReader<TcpStream>) -
             Ok(bytes_read) => {
                 if bytes_read == 0 { break; }
             },
-            Err(err) => {
-                warn!("voicevox tts error: {}", err);
+            Err(_) => {
                 break;
             }
         }
