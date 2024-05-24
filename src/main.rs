@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
-use tracing::error;
+use tracing::{error, info, warn};
 
 mod audio;
 mod tcp;
@@ -46,10 +46,17 @@ async fn play_audio_queue(mut rx: tokio::sync::broadcast::Receiver<Message>) -> 
 }
 
 async fn serve_tcp(tx: tokio::sync::broadcast::Sender<Message>) -> Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:8080").await?;
+    let listener = TcpListener::bind("127.0.0.1:7625").await?;
 
     loop {
-        let (socket, _) = listener.accept().await?;
+        let (socket, _) = match listener.accept().await {
+            Ok(v) => v,
+            Err(err) => {
+                warn!("Failed to accept tcp connection {}", err);
+                continue;
+            }
+        };
+        info!("Obtained new TCP client");
         let tx = tx.clone();
 
         tokio::spawn(async move {
@@ -62,10 +69,20 @@ async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Resul
     let listener = TcpListener::bind("127.0.0.1:9090").await?;
 
     loop {
-        let (socket, _) = listener.accept().await?;
-        let ws_stream = tokio_websockets::ServerBuilder::new()
-            .accept(socket)
-            .await?;
+        let (socket, _) = match listener.accept().await {
+            Ok(v) => v,
+            Err(err) => {
+                warn!("Failed to accept tcp connection {}", err);
+                continue;
+            }
+        };
+        let ws_stream = match tokio_websockets::ServerBuilder::new().accept(socket).await {
+            Ok(v) => v,
+            Err(err) => {
+                warn!("Failed to make WS connection {}", err);
+                continue;
+            }
+        };
 
         let (mut writer, mut reader) = ws_stream.split();
         let alive_reader = Arc::new(atomic::AtomicBool::new(true));
