@@ -46,7 +46,7 @@ async fn play_audio_queue(mut rx: tokio::sync::broadcast::Receiver<Message>) -> 
 }
 
 async fn serve_tcp(tx: tokio::sync::broadcast::Sender<Message>) -> Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:7625").await?;
+    let listener = TcpListener::bind("0.0.0.0:7625").await?;
 
     loop {
         let (socket, _) = match listener.accept().await {
@@ -66,7 +66,7 @@ async fn serve_tcp(tx: tokio::sync::broadcast::Sender<Message>) -> Result<()> {
 }
 
 async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:9090").await?;
+    let listener = TcpListener::bind("0.0.0.0:9090").await?;
 
     loop {
         let (socket, _) = match listener.accept().await {
