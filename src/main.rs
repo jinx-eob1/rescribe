@@ -45,8 +45,8 @@ async fn play_audio_queue(mut rx: tokio::sync::broadcast::Receiver<Message>) -> 
     }
 }
 
-async fn serve_tcp(tx: tokio::sync::broadcast::Sender<Message>) -> Result<()> {
-    let listener = TcpListener::bind("0.0.0.0:7625").await?;
+async fn serve_tcp(tx: tokio::sync::broadcast::Sender<Message>, port: u32) -> Result<()> {
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
     loop {
         let (socket, _) = match listener.accept().await {
@@ -65,8 +65,8 @@ async fn serve_tcp(tx: tokio::sync::broadcast::Sender<Message>) -> Result<()> {
     }
 }
 
-async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Result<()> {
-    let listener = TcpListener::bind("0.0.0.0:9090").await?;
+async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>, port: u32) -> Result<()> {
+    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
     loop {
         let (socket, _) = match listener.accept().await {
@@ -120,6 +120,12 @@ async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>) -> Resul
 pub struct Args {
     #[arg(short='l', long="log-level", help = "Tracing log level")]
     log_level: Option<LogLevel>,
+
+    #[arg(long, default_value = "7625", help = "TCP port for language input data")]
+    tcp_port: Option<u32>,
+
+    #[arg(long, default_value = "7626", help = "Websocket port for ui output")]
+    ws_port: Option<u32>,
 }
 
 #[tokio::main]
@@ -144,11 +150,11 @@ async fn main() ->  Result<()> {
     let msg_rx_audio = msg_rx;
 
     let tcp_server: tokio::task::JoinHandle<Result<(), anyhow::Error>> = tokio::spawn(async move {
-        return serve_tcp(msg_tx).await;
+        return serve_tcp(msg_tx, args.tcp_port.unwrap()).await;
     });
 
     let ws_server = tokio::spawn(async move {
-        return serve_websocket(msg_rx_ws).await;
+        return serve_websocket(msg_rx_ws, args.ws_port.unwrap()).await;
     });
 
     let audio_reader = tokio::spawn(async move {
