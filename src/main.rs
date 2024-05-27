@@ -5,11 +5,11 @@ use std::sync::Arc;
 use std::sync::atomic;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 mod audio;
-mod tcp;
 mod tts;
+mod http;
 
 #[derive(Copy, Clone, clap::ValueEnum)]
 enum LogLevel {
@@ -41,28 +41,25 @@ struct Message {
 async fn play_audio_queue(mut rx: tokio::sync::broadcast::Receiver<Message>) -> Result<()> {
     loop {
         let msg = rx.recv().await?;
-        audio::play_wav(msg.audio_wav).await?;
+
+        if let Err(err) = tokio::task::spawn_blocking(move || {
+            audio::play_wav(msg.audio_wav)
+        }).await {
+            warn!("Failed playing audio: {}", err);
+        }
     }
 }
 
-async fn serve_tcp(tx: tokio::sync::broadcast::Sender<Message>, port: u32) -> Result<()> {
+async fn serve_http(tx: tokio::sync::broadcast::Sender<Message>, port: u32) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
-    loop {
-        let (socket, _) = match listener.accept().await {
-            Ok(v) => v,
-            Err(err) => {
-                warn!("Failed to accept tcp connection {}", err);
-                continue;
-            }
-        };
-        info!("Obtained new TCP client");
-        let tx = tx.clone();
+    let router = axum::Router::new()
+        .route("/queue", axum::routing::post(http::handler))
+            .with_state(tx.clone());
 
-        tokio::spawn(async move {
-            return tcp::handler(socket, tx).await;
-        });
-    }
+    axum::serve(listener, router).await?;
+
+    Ok(())
 }
 
 async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>, port: u32) -> Result<()> {
@@ -121,8 +118,8 @@ pub struct Args {
     #[arg(short='l', long="log-level", help = "Tracing log level")]
     log_level: Option<LogLevel>,
 
-    #[arg(long, default_value = "7625", help = "TCP port for language input data")]
-    tcp_port: Option<u32>,
+    #[arg(long, default_value = "7625", help = "HTTP port for language input data")]
+    http_port: Option<u32>,
 
     #[arg(long, default_value = "7626", help = "Websocket port for ui output")]
     ws_port: Option<u32>,
@@ -149,8 +146,8 @@ async fn main() ->  Result<()> {
     let msg_rx_ws = msg_rx.resubscribe();
     let msg_rx_audio = msg_rx;
 
-    let tcp_server: tokio::task::JoinHandle<Result<(), anyhow::Error>> = tokio::spawn(async move {
-        return serve_tcp(msg_tx, args.tcp_port.unwrap()).await;
+    let http_server: tokio::task::JoinHandle<Result<(), anyhow::Error>> = tokio::spawn(async move {
+        return serve_http(msg_tx, args.http_port.unwrap()).await;
     });
 
     let ws_server = tokio::spawn(async move {
@@ -162,7 +159,7 @@ async fn main() ->  Result<()> {
     });
 
     let res = tokio::select! {
-        res = tcp_server   => res.unwrap(),
+        res = http_server  => res.unwrap(),
         res = ws_server    => res.unwrap(),
         res = audio_reader => res.unwrap()
     };
