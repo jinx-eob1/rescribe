@@ -59,15 +59,15 @@ pub async fn handler(socket: TcpStream, tx: tokio::sync::broadcast::Sender<Messa
             }
         };
 
-        let audio_wav = match tts::voicevox(&packet.translated_text).await {
+        let audio_wav = match tts::process(&packet.language, &packet.translated_text).await {
             Ok(wav) => wav,
             Err(err) => {
-                warn!("Error with voicevox tts {}", err);
+                warn!("TTS err: {}", err);
                 continue;
             }
         };
 
-        info!("Received translation: {}", packet.translated_text);
+        info!("Received translation: {:?}", packet);
         let msg = Message{ translated_text: packet.translated_text, audio_wav };
 
         tx.send(msg)?;
