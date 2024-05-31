@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 mod audio;
 mod tts;
@@ -71,6 +71,7 @@ async fn serve_http(rx: broadcast::Receiver<QueuePacket>, tx: broadcast::Sender<
         .route("/ws",    axum::routing::get (http::handle_websocket)).with_state(rx)
         .route("/queue", axum::routing::post(http::handle_post))     .with_state(tx.clone());
 
+    info!("Listening on port {}", port);
     axum::serve(listener, router).await?;
 
     Ok(())
