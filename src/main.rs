@@ -34,7 +34,7 @@ impl LogLevel {
     }
 }
 
-async fn serve_audio(mut rx: broadcast::Receiver<AudioWav>) -> Result<()> {
+async fn play_audio(mut rx: broadcast::Receiver<AudioWav>) -> Result<()> {
     loop {
         let audio = rx.recv().await?;
 
@@ -46,7 +46,7 @@ async fn serve_audio(mut rx: broadcast::Receiver<AudioWav>) -> Result<()> {
     }
 }
 
-async fn serve_tts(mut rx: broadcast::Receiver<http::QueuePacket>, tx: broadcast::Sender<AudioWav>) -> Result<()> {
+async fn generate_tts(mut rx: broadcast::Receiver<http::QueuePacket>, tx: broadcast::Sender<AudioWav>) -> Result<()> {
     loop {
         let msg = rx.recv().await?;
 
@@ -103,22 +103,26 @@ async fn main() ->  Result<()> {
     let span = tracing::trace_span!("rescribe");
     let _guard = span.enter();
 
+    // Queue channels for moving data through
     let (queue_tx, queue_rx) = broadcast::channel::<http::QueuePacket>(64);
     let (audio_tx, audio_rx) = broadcast::channel::<AudioWav>(64);
 
     let queue_ws_rx  = queue_rx.resubscribe();
     let queue_tts_rx = queue_rx;
 
+    // Handle websocket output and post request input
     let http_server = tokio::spawn(async move {
         return serve_http(queue_ws_rx, queue_tx, args.port.unwrap()).await;
     });
 
+    // Create TTS from POSTed data
     let tts_generator = tokio::spawn(async move {
-        return serve_tts(queue_tts_rx, audio_tx).await;
+        return generate_tts(queue_tts_rx, audio_tx).await;
     });
 
+    // Play audio from generated TTS
     let audio_reader = tokio::spawn(async move {
-        return serve_audio(audio_rx).await;
+        return play_audio(audio_rx).await;
     });
 
     let res = tokio::select! {

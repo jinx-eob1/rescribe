@@ -28,6 +28,8 @@ async fn handle_upgraded_websocket(socket: WebSocket, rx: Arc<broadcast::Receive
     let alive_reader = Arc::new(atomic::AtomicBool::new(true));
     let alive_write = Arc::clone(&alive_reader);
 
+    // Do nothing on read but mark the connection as dead when reading is finished
+    // This prevents us from continuing to write to a disconnected client
     tokio::spawn(async move {
         while let Some(Ok(_)) = reader.next().await { }
         alive_reader.store(false, atomic::Ordering::Relaxed);
@@ -38,6 +40,7 @@ async fn handle_upgraded_websocket(socket: WebSocket, rx: Arc<broadcast::Receive
         loop {
             let msg = rx.recv().await;
 
+            // Don't try to send data to a dead client
             let alive = alive_write.load(atomic::Ordering::Relaxed);
             if !alive {
                 break;
@@ -46,7 +49,7 @@ async fn handle_upgraded_websocket(socket: WebSocket, rx: Arc<broadcast::Receive
             if let Ok(msg) = msg {
                 let tokio_msg = axum::extract::ws::Message::Text(msg.translated_text);
 
-                // Assume socket is closed
+                // Assume socket is closed on error
                 if let Err(_err) = writer.send(tokio_msg).await {
                     break;
                 }
