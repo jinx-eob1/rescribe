@@ -1,15 +1,19 @@
 use anyhow::{Result, Context};
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
+use http::QueuePacket;
 use std::sync::Arc;
 use std::sync::atomic;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, warn};
+use tokio::sync::broadcast;
 
 mod audio;
 mod tts;
 mod http;
+
+type AudioWav = bytes::Bytes;
 
 #[derive(Copy, Clone, clap::ValueEnum)]
 enum LogLevel {
@@ -32,25 +36,35 @@ impl LogLevel {
     }
 }
 
-#[derive(Clone, Debug)]
-struct Message {
-    pub translated_text: String,
-    pub audio_wav: bytes::Bytes
-}
-
-async fn play_audio_queue(mut rx: tokio::sync::broadcast::Receiver<Message>) -> Result<()> {
+async fn serve_audio(mut rx: broadcast::Receiver<AudioWav>) -> Result<()> {
     loop {
-        let msg = rx.recv().await?;
+        let audio = rx.recv().await?;
 
         if let Err(err) = tokio::task::spawn_blocking(move || {
-            audio::play_wav(msg.audio_wav)
+            audio::play_wav(audio)
         }).await {
             warn!("Failed playing audio: {}", err);
         }
     }
 }
 
-async fn serve_http(tx: tokio::sync::broadcast::Sender<Message>, port: u32) -> Result<()> {
+async fn serve_tts(mut rx: broadcast::Receiver<http::QueuePacket>, tx: broadcast::Sender<AudioWav>) -> Result<()> {
+    loop {
+        let msg = rx.recv().await?;
+
+        let audio_wav = match tts::process(&msg.language, &msg.translated_text).await {
+            Ok(wav) => wav,
+            Err(err) => {
+                warn!("TTS err: {}", err);
+                continue;
+            }
+        };
+
+        tx.send(audio_wav)?;
+    }
+}
+
+async fn serve_http(tx: broadcast::Sender<QueuePacket>, port: u32) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
     let router = axum::Router::new()
@@ -62,7 +76,7 @@ async fn serve_http(tx: tokio::sync::broadcast::Sender<Message>, port: u32) -> R
     Ok(())
 }
 
-async fn serve_websocket(rx: tokio::sync::broadcast::Receiver<Message>, port: u32) -> Result<()> {
+async fn serve_websocket(rx: broadcast::Receiver<QueuePacket>, port: u32) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
     loop {
@@ -142,26 +156,33 @@ async fn main() ->  Result<()> {
     let span = tracing::trace_span!("rescribe");
     let _guard = span.enter();
 
-    let (msg_tx, msg_rx) = tokio::sync::broadcast::channel::<Message>(64);
-    let msg_rx_ws = msg_rx.resubscribe();
-    let msg_rx_audio = msg_rx;
+    let (queue_tx, queue_rx) = broadcast::channel::<http::QueuePacket>(64);
+    let (audio_tx, audio_rx) = broadcast::channel::<AudioWav>(64);
 
-    let http_server: tokio::task::JoinHandle<Result<(), anyhow::Error>> = tokio::spawn(async move {
-        return serve_http(msg_tx, args.http_port.unwrap()).await;
+    let queue_ws_rx  = queue_rx.resubscribe();
+    let queue_tts_rx = queue_rx;
+
+    let http_server = tokio::spawn(async move {
+        return serve_http(queue_tx, args.http_port.unwrap()).await;
     });
 
     let ws_server = tokio::spawn(async move {
-        return serve_websocket(msg_rx_ws, args.ws_port.unwrap()).await;
+        return serve_websocket(queue_ws_rx, args.ws_port.unwrap()).await;
+    });
+
+    let tts_generator = tokio::spawn(async move {
+        return serve_tts(queue_tts_rx, audio_tx).await;
     });
 
     let audio_reader = tokio::spawn(async move {
-        return play_audio_queue(msg_rx_audio).await;
+        return serve_audio(audio_rx).await;
     });
 
     let res = tokio::select! {
-        res = http_server  => res.unwrap(),
-        res = ws_server    => res.unwrap(),
-        res = audio_reader => res.unwrap()
+        res = http_server   => res.unwrap(),
+        res = ws_server     => res.unwrap(),
+        res = audio_reader  => res.unwrap(),
+        res = tts_generator => res.unwrap()
     };
 
     if let Err(err) = res {
