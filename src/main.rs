@@ -1,15 +1,11 @@
 use anyhow::{Result, Context};
-use axum::extract::State;
-use axum::extract::ws::{WebSocketUpgrade, WebSocket};
 use clap::Parser;
-use futures_util::{SinkExt, StreamExt};
 use http::QueuePacket;
 use std::sync::Arc;
-use std::sync::atomic;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
-use tracing::{error, warn};
 use tokio::sync::broadcast;
+use tracing::{error, warn};
 
 mod audio;
 mod tts;
@@ -66,52 +62,14 @@ async fn serve_tts(mut rx: broadcast::Receiver<http::QueuePacket>, tx: broadcast
     }
 }
 
-async fn handle_websocket(socket: WebSocket, rx: Arc<broadcast::Receiver<QueuePacket>>) {
-    let (mut writer, mut reader) = socket.split();
-    let alive_reader = Arc::new(atomic::AtomicBool::new(true));
-    let alive_write = Arc::clone(&alive_reader);
-
-    tokio::spawn(async move {
-        while let Some(Ok(_)) = reader.next().await { }
-        alive_reader.store(false, atomic::Ordering::Relaxed);
-    });
-
-    let mut rx = rx.resubscribe();
-    tokio::spawn(async move {
-        loop {
-            let msg = rx.recv().await;
-
-            let alive = alive_write.load(atomic::Ordering::Relaxed);
-            if !alive {
-                break;
-            }
-    
-            if let Ok(msg) = msg {
-                let tokio_msg = axum::extract::ws::Message::Text(msg.translated_text);
-
-                // Assume socket is closed
-                if let Err(_err) = writer.send(tokio_msg).await {
-                    break;
-                }
-            }
-        }
-    });
-}
-
-async fn ws_handler(ws: WebSocketUpgrade, State(rx): State<Arc<broadcast::Receiver<QueuePacket>>>) -> axum::response::Response {
-    ws.on_upgrade(|socket| handle_websocket(socket, rx))
-}
-
 async fn serve_http(rx: broadcast::Receiver<QueuePacket>, tx: broadcast::Sender<QueuePacket>, port: u32) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
     let rx = Arc::new(rx);
 
     let router = axum::Router::new()
-        .route("/ws", axum::routing::get(ws_handler))
-            .with_state(rx)
-        .route("/queue", axum::routing::post(http::handler))
-            .with_state(tx.clone());
+        .route("/ws",    axum::routing::get (http::handle_websocket)).with_state(rx)
+        .route("/queue", axum::routing::post(http::handle_post))     .with_state(tx.clone());
 
     axum::serve(listener, router).await?;
 
