@@ -53,10 +53,11 @@ async fn piper(text: &str) -> Result<bytes::Bytes> {
 }
 
 async fn voicevox(text: &str) -> Result<bytes::Bytes> {
+    let speaker = "4";
     let span = tracing::trace_span!("voicevox");
     let _guard = span.enter();
     // Url encode
-    let url = Url::parse(&std::format!("http://127.0.0.1:50021/audio_query?speaker=1&text={}", text))?.to_string();
+    let url = Url::parse(&std::format!("http://127.0.0.1:50021/audio_query?speaker={speaker}&text={}", text))?.to_string();
 
     let client = reqwest::Client::new();
 
@@ -68,7 +69,7 @@ async fn voicevox(text: &str) -> Result<bytes::Bytes> {
     let json_voice_data = res.text().await?;
 
     let res = client
-        .post("http://127.0.0.1:50021/synthesis?speaker=1")
+        .post(format!("http://127.0.0.1:50021/synthesis?speaker={speaker}"))
         .body(json_voice_data)
         .send()
         .await.context("Failed wav GET")?;
