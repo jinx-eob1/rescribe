@@ -81,11 +81,8 @@ pub struct Args {
     #[arg(short='l', long="log-level", help = "Tracing log level")]
     log_level: Option<LogLevel>,
 
-    #[arg(long, default_value = "7625", help = "HTTP port for language input data")]
-    http_port: Option<u32>,
-
-    #[arg(long, default_value = "7626", help = "Websocket port for ui output")]
-    ws_port: Option<u32>,
+    #[arg(long, default_value = "7625", help = "Port for language data POST input & websocket output")]
+    port: Option<u32>,
 }
 
 #[tokio::main]
@@ -112,7 +109,7 @@ async fn main() ->  Result<()> {
     let queue_tts_rx = queue_rx;
 
     let http_server = tokio::spawn(async move {
-        return serve_http(queue_ws_rx, queue_tx, args.http_port.unwrap()).await;
+        return serve_http(queue_ws_rx, queue_tx, args.port.unwrap()).await;
     });
 
     let tts_generator = tokio::spawn(async move {
