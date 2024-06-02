@@ -10,7 +10,10 @@ use tracing::info;
 pub struct QueuePacket {
     pub language: String,
     pub original_text: Option<String>,
-    pub translated_text: String
+    pub translated_text: String,
+    // If we receive a message from the websocket client
+    // itself, we do not want to loop by sending it again
+    pub prevent_ws_forward: Option<bool>
 }
 
 pub async fn handle_post(State(tx): State<broadcast::Sender<QueuePacket>>, axum::Json(packet): axum::Json<QueuePacket>) {
@@ -47,6 +50,12 @@ async fn handle_upgraded_websocket(socket: WebSocket, rx: Arc<broadcast::Receive
             }
     
             if let Ok(msg) = msg {
+                if let Some(prevent_forward) = msg.prevent_ws_forward {
+                    if prevent_forward {
+                        continue;
+                    }
+                }
+
                 let tokio_msg = axum::extract::ws::Message::Text(msg.translated_text);
 
                 // Assume socket is closed on error

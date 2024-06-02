@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
+use tower_http::services::ServeDir;
 use tracing::{error, info, warn};
 
 mod audio;
@@ -68,6 +69,7 @@ async fn serve_http(rx: broadcast::Receiver<QueuePacket>, tx: broadcast::Sender<
     let rx = Arc::new(rx);
 
     let router = axum::Router::new()
+        .nest_service("/ui", ServeDir::new("ui"))
         .route("/ws",    axum::routing::get (http::handle_websocket)).with_state(rx)
         .route("/queue", axum::routing::post(http::handle_post))     .with_state(tx);
 
