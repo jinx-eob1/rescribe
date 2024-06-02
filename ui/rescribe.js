@@ -1,4 +1,6 @@
-let socket = new WebSocket("ws://127.0.0.1:7625/ws");
+let host = window.location.hostname;
+
+let socket = new WebSocket("ws:/" + host + ":7625/ws");
 
 let post_to_rescribe = (text) => {
     const data = {
@@ -11,7 +13,7 @@ let post_to_rescribe = (text) => {
     const xhr = new XMLHttpRequest();
 
     // Open a POST request to the specified IP and port
-    xhr.open('POST', `http://127.0.0.1:7625/queue`, true);
+    xhr.open('POST', "http://" + host + ":7625/queue", true);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.onreadystatechange = function() {
       if (xhr.readyState === XMLHttpRequest.DONE) {
