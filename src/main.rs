@@ -12,8 +12,6 @@ mod audio;
 mod tts;
 mod http;
 
-type AudioWav = bytes::Bytes;
-
 #[derive(Copy, Clone, clap::ValueEnum)]
 enum LogLevel {
     Trace,
@@ -35,19 +33,7 @@ impl LogLevel {
     }
 }
 
-async fn play_audio(mut rx: broadcast::Receiver<AudioWav>) -> Result<()> {
-    loop {
-        let audio = rx.recv().await?;
-
-        if let Err(err) = tokio::task::spawn_blocking(move || {
-            audio::play_wav(audio)
-        }).await {
-            warn!("Failed playing audio: {}", err);
-        }
-    }
-}
-
-async fn generate_tts(mut rx: broadcast::Receiver<http::QueuePacket>, tx: broadcast::Sender<AudioWav>) -> Result<()> {
+async fn generate_tts(mut rx: broadcast::Receiver<http::QueuePacket>, tx: broadcast::Sender<audio::Wav>) -> Result<()> {
     loop {
         let msg = rx.recv().await?;
 
@@ -107,7 +93,7 @@ async fn main() ->  Result<()> {
 
     // Queue channels for moving data through
     let (queue_tx, queue_rx) = broadcast::channel::<http::QueuePacket>(64);
-    let (audio_tx, audio_rx) = broadcast::channel::<AudioWav>(64);
+    let (audio_tx, audio_rx) = broadcast::channel::<audio::Wav>(64);
 
     let queue_ws_rx  = queue_rx.resubscribe();
     let queue_tts_rx = queue_rx;
@@ -123,13 +109,14 @@ async fn main() ->  Result<()> {
     });
 
     // Play audio from generated TTS
-    let audio_reader = tokio::spawn(async move {
-        return play_audio(audio_rx).await;
+    // Rodio is not async, so we use blocking here instead
+    let audio_player = tokio::task::spawn_blocking(move || {
+        audio::player(audio_rx)
     });
 
     let res = tokio::select! {
         res = http_server   => res.unwrap(),
-        res = audio_reader  => res.unwrap(),
+        res = audio_player  => res.unwrap(),
         res = tts_generator => res.unwrap()
     };
 
