@@ -56,8 +56,9 @@ async fn serve_http(rx: broadcast::Receiver<QueuePacket>, tx: broadcast::Sender<
 
     let router = axum::Router::new()
         .nest_service("/", ServeDir::new("ui"))
-        .route("/ws",    axum::routing::get (http::handle_websocket)).with_state(rx)
-        .route("/queue", axum::routing::post(http::handle_post))     .with_state(tx);
+        .route("/ws",        axum::routing::get (http::handle_websocket))     .with_state(rx)
+        .route("/queue",     axum::routing::post(http::handle_queue_post))    .with_state(tx.clone())
+        .route("/translate", axum::routing::post(http::handle_translate_post)).with_state(tx);
 
     info!("Listening on port {}", port);
     axum::serve(listener, router).await?;
