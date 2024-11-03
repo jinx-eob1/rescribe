@@ -1,7 +1,7 @@
 use anyhow::{Result, Context};
 use clap::Parser;
 use http::QueuePacket;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
@@ -9,6 +9,7 @@ use tower_http::services::ServeDir;
 use tracing::{error, info, warn};
 
 mod audio;
+mod db;
 mod tts;
 mod http;
 
@@ -52,13 +53,15 @@ async fn generate_tts(mut rx: broadcast::Receiver<http::QueuePacket>, tx: broadc
 async fn serve_http(rx: broadcast::Receiver<QueuePacket>, tx: broadcast::Sender<QueuePacket>, port: u32) -> Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
+    let db = db::Db::open("rescribe.db")?;
+
     let rx = Arc::new(rx);
 
     let router = axum::Router::new()
         .nest_service("/", ServeDir::new("ui"))
         .route("/ws",        axum::routing::get (http::handle_websocket))     .with_state(rx)
         .route("/queue",     axum::routing::post(http::handle_queue_post))    .with_state(tx.clone())
-        .route("/translate", axum::routing::post(http::handle_translate_post)).with_state(tx);
+        .route("/translate", axum::routing::post(http::handle_translate_post)).with_state((db, tx));
 
     info!("Listening on port {}", port);
     axum::serve(listener, router).await?;

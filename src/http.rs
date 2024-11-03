@@ -6,7 +6,10 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::sync::{Arc, atomic};
 use tokio::sync::broadcast;
-use tracing::{info, error};
+use tracing::{info, debug, error};
+use std::collections::HashMap;
+
+use crate::db::Db;
 
 #[derive(Clone, Deserialize, Debug)]
 pub struct QueuePacket {
@@ -25,21 +28,35 @@ pub struct TranslatePacket {
     pub text: Vec<String>
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct DeeplResponseTranslation {
     text: String
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct DeeplResponse {
     translations: Vec<DeeplResponseTranslation>,
 }
 
-// Responds with deepl json response
-pub async fn deepl_translate(tx: broadcast::Sender<QueuePacket>, packet: TranslatePacket) -> Result<String> {
-    let _span = tracing::trace_span!("translation");
-    info!("Received request for translation: {:?}", packet);
+fn get_cached_translation(db: &Db, packet: &TranslatePacket) -> Result<HashMap<usize, String>> {
+    let mut cached_translations: HashMap<usize, String> = HashMap::new();
 
+    for (idx, text) in packet.text.iter().enumerate() {
+        if let Some(translations) = db.lookup_translation(text)? {
+            let mut translations: HashMap<String, String> = serde_json::from_str(&translations).context("Serde db translation -> map")?;
+
+            if let Some(t) = translations.remove(&packet.target_lang) {
+                debug!("Found {t} in cache");
+                cached_translations.insert(idx, t);
+            }
+        }
+    }
+
+    Ok(cached_translations)
+}
+
+
+async fn deepl_translate(original_text_vec: Vec<String>, packet: &TranslatePacket) -> Result<DeeplResponse> {
     let key = std::env::var("RESCRIBE_DEEPL_KEY").context("RESCRIBE_DEEPL_KEY env var not set")?;
 
     let endpoint = if key.ends_with(":fx") { "https://api-free.deepl.com/v2/translate" }
@@ -53,7 +70,7 @@ pub async fn deepl_translate(tx: broadcast::Sender<QueuePacket>, packet: Transla
         //"formality": "prefer_less",
         //"tag_handling": "xml",
         "source_lang": packet.source_lang,
-        "text": packet.text
+        "text": original_text_vec
     }).to_string();
 
     let client = reqwest::Client::new();
@@ -72,6 +89,48 @@ pub async fn deepl_translate(tx: broadcast::Sender<QueuePacket>, packet: Transla
     let res_text = res.text().await.context("Failed getting text from deepl")?;
     let resp: DeeplResponse = serde_json::from_str(&res_text)?;
 
+    Ok(resp)
+}
+
+// Responds with deepl json response
+pub async fn translate(db: Db, tx: broadcast::Sender<QueuePacket>, packet: TranslatePacket) -> Result<String> {
+    let _span = tracing::trace_span!("translation");
+    info!("Received request for translation: {:?}", packet);
+
+    let mut cached_translations: HashMap<usize, String> = get_cached_translation(&db, &packet)?;
+
+    let original_text_vec: Vec<String> = packet.text.iter()
+        .enumerate()
+        .filter(|(index, _)| !cached_translations.contains_key(index) )
+        .map(|(_, text)| text.clone()).collect();
+
+    let mut deepl_resp = if !original_text_vec.is_empty() {
+        deepl_translate(original_text_vec, &packet).await?
+    }
+    else {
+        DeeplResponse  { translations: Vec::new() }
+    };
+
+    // Combine cached and just now queried translations
+    // Caching newly queried results in the process
+    let translations_len = cached_translations.len() + deepl_resp.translations.len();
+
+    let mut resp = DeeplResponse { translations: Vec::new() };
+
+
+    for i in 0..translations_len {
+        match cached_translations.remove(&i) {
+            Some(text) => {
+                resp.translations.push(DeeplResponseTranslation { text });
+            },
+            None => {
+                let t = deepl_resp.translations.remove(0);
+                db.add_translation(&packet.text[i], &packet.target_lang, &t.text)?;
+                resp.translations.push(t);
+            }
+        }
+    }
+
     for (i, translation) in resp.translations.iter().enumerate() {
         let original_text = packet.text.get(i).map(String::clone);
 
@@ -85,15 +144,18 @@ pub async fn deepl_translate(tx: broadcast::Sender<QueuePacket>, packet: Transla
         tx.send(queue_packet).unwrap();
     }
 
+    let res_text = serde_json::to_string(&resp)?;
+
     Ok(res_text)
 }
 
-pub async fn handle_translate_post(State(tx): State<broadcast::Sender<QueuePacket>>, axum::Json(packet): axum::Json<TranslatePacket>) -> axum::response::Response {
-    match deepl_translate(tx, packet).await {
-        //Ok(()) => axum::http::StatusCode::OK.into_response(),
+pub async fn handle_translate_post(State(state): State<(Db, broadcast::Sender<QueuePacket>)>, axum::Json(packet): axum::Json<TranslatePacket>) -> axum::response::Response {
+    let (db, tx) = state;
+
+    match translate(db, tx, packet).await {
         Ok(res) => (axum::http::StatusCode::OK, res).into_response(),
         Err(e) => {
-            error!("Error during translation: {e}");
+            error!("Error during translation: {:?}", e);
             axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
